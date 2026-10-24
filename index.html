@@ -50,19 +50,23 @@ document.getElementById('startGuest').onclick=()=>{member=null;beginOrder()};
 document.getElementById('startMember').onclick=()=>{document.getElementById('welcomeMember').classList.remove('hidden');document.getElementById('welcomeName').focus()};
 document.getElementById('confirmMember').onclick=()=>{let n=document.getElementById('welcomeName').value.trim(),p=document.getElementById('welcomePhone').value.replace(/\D/g,'');if(!n||p.length!==10){toast('Ingresa un nombre y un teléfono ficticio de 10 dígitos.');return}member={name:n,phone:'••••'+p.slice(-4)};document.getElementById('welcomePhone').value='';beginOrder();toast('Identificación de prueba completada')};
 document.getElementById('changeIdentity').onclick=()=>{ordering.classList.add('hidden');welcome.classList.remove('hidden');document.getElementById('welcomeMember').classList.add('hidden');welcome.scrollIntoView({behavior:'smooth',block:'start'})};
-const clientTokenKey='mixeQrClient:'+m;
+const deviceTokenKey='mixeQrDeviceId';
+const visitTokenKey='mixeQrVisit:'+m;
 function makeClientToken(){if(window.crypto&&typeof crypto.randomUUID==='function')return crypto.randomUUID();return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==='x'?r:(r&3|8)).toString(16)})}
-let clientToken=localStorage.getItem(clientTokenKey)||'';
-if(!/^[0-9a-f-]{36}$/i.test(clientToken)){clientToken=makeClientToken();localStorage.setItem(clientTokenKey,clientToken)}
+let deviceToken=localStorage.getItem(deviceTokenKey)||'';
+if(!/^[0-9a-f-]{36}$/i.test(deviceToken)){deviceToken=makeClientToken();localStorage.setItem(deviceTokenKey,deviceToken)}
+function getVisitToken(){let saved=null;try{saved=JSON.parse(sessionStorage.getItem(visitTokenKey)||'null')}catch(_e){}if(saved&&/^[0-9a-f-]{36}$/i.test(saved.token)&&Date.now()-Number(saved.startedAt)<8*60*60*1000)return saved.token;const token=makeClientToken();sessionStorage.setItem(visitTokenKey,JSON.stringify({token,startedAt:Date.now()}));sessionStorage.removeItem('mixeQrOrders:'+m);return token}
+let clientToken=getVisitToken();
+function rotateVisitToken(){clientToken=makeClientToken();sessionStorage.setItem(visitTokenKey,JSON.stringify({token:clientToken,startedAt:Date.now()}));qrOrderIds=[];sessionStorage.setItem(qrOrdersKey,'[]')}
 document.getElementById('send').onclick=async()=>{
  if(!cart.length){toast('Agrega un producto primero.');return}
  const button=document.getElementById('send');button.disabled=true;button.textContent='Enviando pedido…';
  try{
-  const payload={action:'public_order',table_code:m,client_token:clientToken,notes:document.getElementById('note').value.trim(),items:cart.map(x=>({name:ps.find(p=>p[0]===x.id)[1],quantity:x.q,option_label:x.option||null,notes:x.note||null}))};
+  const payload={action:'public_order',table_code:m,client_token:clientToken,device_token:deviceToken,notes:document.getElementById('note').value.trim(),items:cart.map(x=>({name:ps.find(p=>p[0]===x.id)[1],quantity:x.q,option_label:x.option||null,notes:x.note||null}))};
   const response=await fetch('https://mpbtxrhtfdbqyofrjszp.supabase.co/functions/v1/mixe-pos-api',{method:'POST',headers:{apikey:'sb_publishable_nizIqy4OjGKu3ckhCOMMrQ_zi2FwVib','Content-Type':'application/json'},body:JSON.stringify(payload)});
   const result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||'No se pudo enviar el pedido.');
   const order=result.order;
-  if(order?.id){qrOrderIds=Array.from(new Set([...qrOrderIds,order.id])).slice(-10);localStorage.setItem(qrOrdersKey,JSON.stringify(qrOrderIds));}
+  if(order?.id){qrOrderIds=Array.from(new Set([...qrOrderIds,order.id])).slice(-10);sessionStorage.setItem(qrOrdersKey,JSON.stringify(qrOrderIds));}
   cart=[];drawCart();document.getElementById('note').value='';
   toast('Pedido recibido; espera confirmación del mesero. Folio '+String(order.id).slice(0,8)+' · Total '+money(order.total));
   await refreshMyOrders();
@@ -72,7 +76,7 @@ document.getElementById('send').onclick=async()=>{
 };
 const qrOrdersKey='mixeQrOrders:'+m;
 let qrOrderIds=[];
-try{const saved=JSON.parse(localStorage.getItem(qrOrdersKey)||'[]');if(Array.isArray(saved))qrOrderIds=saved.filter(x=>typeof x==='string'&&/^[0-9a-f-]{36}$/i.test(x)).slice(-10)}catch(_e){}
+try{const saved=JSON.parse(sessionStorage.getItem(qrOrdersKey)||'[]');if(Array.isArray(saved))qrOrderIds=saved.filter(x=>typeof x==='string'&&/^[0-9a-f-]{36}$/i.test(x)).slice(-10)}catch(_e){}
 const orderStatusLabel={pending_confirmation:'Esperando confirmación del mesero',open:'Confirmado por el mesero',sent:'Enviado a cocina o barra',preparing:'En preparación',ready:'Listo para entregar',served:'Entregado; pendiente de pago',closed:'Pagado y cerrado',cancelled:'Pedido cancelado'};
 const itemStatusLabel={pending:'Pendiente',sent:'Enviado',preparing:'En preparación',ready:'Listo',served:'Entregado',void:'Cancelado'};
 function renderMyOrders(orders){
@@ -92,20 +96,21 @@ function renderMyOrders(orders){
  }).join('');
 }
 async function refreshMyOrders(){
- const found=[];
+ const found=[];let listQuerySucceeded=false;
  try{
   const response=await fetch('https://mpbtxrhtfdbqyofrjszp.supabase.co/functions/v1/mixe-pos-api',{method:'POST',headers:{apikey:'sb_publishable_nizIqy4OjGKu3ckhCOMMrQ_zi2FwVib','Content-Type':'application/json'},body:JSON.stringify({action:'public_client_orders',table_code:m,client_token:clientToken})});
   const result=await response.json();
-  if(response.ok&&result.ok&&Array.isArray(result.orders))found.push(...result.orders);
+  if(response.ok&&result.ok&&Array.isArray(result.orders)){found.push(...result.orders);listQuerySucceeded=true;}
  }catch(_e){}
  for(const id of qrOrderIds){
   if(found.some(o=>String(o.id)===String(id)))continue;
   try{
-   const response=await fetch('https://mpbtxrhtfdbqyofrjszp.supabase.co/functions/v1/mixe-pos-api',{method:'POST',headers:{apikey:'sb_publishable_nizIqy4OjGKu3ckhCOMMrQ_zi2FwVib','Content-Type':'application/json'},body:JSON.stringify({action:'public_order_status',table_code:m,order_id:id})});
+   const response=await fetch('https://mpbtxrhtfdbqyofrjszp.supabase.co/functions/v1/mixe-pos-api',{method:'POST',headers:{apikey:'sb_publishable_nizIqy4OjGKu3ckhCOMMrQ_zi2FwVib','Content-Type':'application/json'},body:JSON.stringify({action:'public_order_status',table_code:m,order_id:id,client_token:clientToken})});
    const result=await response.json();
    if(response.ok&&result.ok&&result.order&&!found.some(o=>String(o.id)===String(result.order.id)))found.push(result.order);
   }catch(_e){}
  }
+ if(listQuerySucceeded&&qrOrderIds.length>0&&found.length===0){rotateVisitToken();renderMyOrders([]);return}
  renderMyOrders(found);
 }
 function drawOrders(){document.getElementById('orders').innerHTML=orders.length?orders.map(o=>'<div class="order"><div class="row"><strong>#'+o.id+' · '+o.table+'</strong><strong>'+money(o.total)+'</strong></div><p class="muted">'+o.time+' · '+(o.member?'Club: '+o.member:'Sin identificar')+'</p><p>'+o.items.map(i=>esc(i.q+' × '+i.name)+(i.option?' ('+esc(i.option)+')':'')+(i.note?' — '+esc(i.note):'')).join('<br>')+'</p><select data-state="'+o.id+'"><option '+(o.status==='Pendiente'?'selected':'')+'>Pendiente</option><option '+(o.status==='Preparando'?'selected':'')+'>Preparando</option><option '+(o.status==='Listo'?'selected':'')+'>Listo</option><option '+(o.status==='Entregado'?'selected':'')+'>Entregado</option><option '+(o.status==='Cancelado'?'selected':'')+'>Cancelado</option></select></div>').join(''):'<p class="muted">Aún no hay pedidos.</p>';document.querySelectorAll('[data-state]').forEach(s=>s.onchange=()=>{orders=orders.map(o=>String(o.id)===s.dataset.state?{...o,status:s.value}:o);localStorage.setItem('mixePilotOrders',JSON.stringify(orders));drawOrders()})}
