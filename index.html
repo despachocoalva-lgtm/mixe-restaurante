@@ -56,7 +56,7 @@ const visitHasOrdersKey='mixeQrVisitHasOrders:'+m;
 function makeClientToken(){if(window.crypto&&typeof crypto.randomUUID==='function')return crypto.randomUUID();return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==='x'?r:(r&3|8)).toString(16)})}
 let deviceToken=localStorage.getItem(deviceTokenKey)||'';
 if(!/^[0-9a-f-]{36}$/i.test(deviceToken)){deviceToken=makeClientToken();localStorage.setItem(deviceTokenKey,deviceToken)}
-function getVisitToken(){let saved=null;try{saved=JSON.parse(localStorage.getItem(visitTokenKey)||'null')}catch(_e){}if(saved&&/^[0-9a-f-]{36}$/i.test(saved.token))return saved.token;const token=makeClientToken();localStorage.setItem(visitTokenKey,JSON.stringify({token,startedAt:Date.now()}));return token}
+function getVisitToken(){let saved=null;try{saved=JSON.parse(localStorage.getItem(visitTokenKey)||'null')}catch(_e){}if(saved&&/^[0-9a-f-]{36}$/i.test(saved.token))return saved.token;try{saved=JSON.parse(sessionStorage.getItem(visitTokenKey)||'null')}catch(_e){}if(saved&&/^[0-9a-f-]{36}$/i.test(saved.token)){localStorage.setItem(visitTokenKey,JSON.stringify(saved));return saved.token}const token=makeClientToken();localStorage.setItem(visitTokenKey,JSON.stringify({token,startedAt:Date.now()}));return token}
 let clientToken=getVisitToken();
 function rotateVisitToken(){clientToken=makeClientToken();localStorage.setItem(visitTokenKey,JSON.stringify({token:clientToken,startedAt:Date.now()}));localStorage.removeItem(visitHasOrdersKey);qrOrderIds=[];localStorage.setItem(qrOrdersKey,'[]')}
 document.getElementById('send').onclick=async()=>{
@@ -77,7 +77,7 @@ document.getElementById('send').onclick=async()=>{
 };
 const qrOrdersKey='mixeQrOrders:'+m;
 let qrOrderIds=[];
-try{const saved=JSON.parse(localStorage.getItem(qrOrdersKey)||'[]');if(Array.isArray(saved))qrOrderIds=saved.filter(x=>typeof x==='string'&&/^[0-9a-f-]{36}$/i.test(x)).slice(-10)}catch(_e){}
+try{let saved=JSON.parse(localStorage.getItem(qrOrdersKey)||'null');if(!Array.isArray(saved))saved=JSON.parse(sessionStorage.getItem(qrOrdersKey)||'[]');if(Array.isArray(saved)){qrOrderIds=saved.filter(x=>typeof x==='string'&&/^[0-9a-f-]{36}$/i.test(x)).slice(-10);localStorage.setItem(qrOrdersKey,JSON.stringify(qrOrderIds))}}catch(_e){}
 const orderStatusLabel={pending_confirmation:'Esperando confirmación del mesero',open:'Confirmado por el mesero',sent:'Enviado a cocina o barra',preparing:'En preparación',ready:'Listo para entregar',served:'Entregado; pendiente de pago',closed:'Pagado y cerrado',cancelled:'Pedido cancelado'};
 const itemStatusLabel={pending:'Pendiente',sent:'Enviado',preparing:'En preparación',ready:'Listo',served:'Entregado',void:'Cancelado'};
 function renderMyOrders(orders){
