@@ -45,7 +45,7 @@ btn.disabled=true;btn.textContent="Enviando…";
 try{
 if(!window.supabase||!window.supabase.createClient)throw Error("No cargó la biblioteca de conexión. Recarga la página.");
 const client=window.supabase.createClient("https://mpbtxrhtfdbqyofrjszp.supabase.co","sb_publishable_nizIqy4OjGKu3ckhCOMMrQ_zi2FwVib");
-const {error}=await client.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});
+const {error}=await client.auth.resetPasswordForEmail(email,{redirectTo:"https://project-13qmm.vercel.app/pos.html"});
 if(error)throw error;
 err.textContent="Solicitud enviada a "+email+". Revisa entrada y spam; abre el correo más reciente.";
 }catch(e){err.textContent="Error: "+(e&&e.message?e.message:String(e));}
