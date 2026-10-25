@@ -23,7 +23,7 @@ body.qr-mode .footer{padding:16px 0}
 @media(max-width:760px){
 body.qr-mode #send{position:fixed;left:12px;right:12px;bottom:12px;width:calc(100% - 24px);z-index:1000;margin:0;padding:16px 18px;border-radius:12px;box-shadow:0 4px 18px rgba(0,0,0,.24);touch-action:manipulation}
 body.qr-mode .wrap{padding-bottom:88px}
-body.qr-mode .panel{padding-bottom:78px}
+body.qr-mode .panel{padding-bottom:78px;position:static!important;top:auto!important}
 body.qr-mode #send:disabled{opacity:.75}
 }
 </style></head><body><div class="wrap">
@@ -82,8 +82,9 @@ document.getElementById('send').onclick=async()=>{
    // En móviles el navegador puede ignorar scrollIntoView dentro de una columna sticky.
    // Desplaza la página completa hasta el historial una vez que el panel se haya actualizado.
    setTimeout(()=>{
-    const y=ordersPanel.getBoundingClientRect().top+window.scrollY;
-    window.scrollTo({top:Math.max(0,y-16),behavior:'smooth'});
+    const rect=ordersPanel.getBoundingClientRect();
+    const target=rect.bottom+window.scrollY-window.innerHeight+24;
+    window.scrollTo({top:Math.max(0,target),behavior:'smooth'});
    },250);
   }
  }catch(err){toast(err.message||'Error al enviar el pedido.');}
