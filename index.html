@@ -20,6 +20,12 @@ body.qr-mode .brand{font-size:27px}
 body.qr-mode .brand small{font-size:9px}
 body.qr-mode .footer{padding:16px 0}
 @media(max-width:760px){body.qr-mode .wrap{padding:10px 12px}body.qr-mode .layout{grid-template-columns:1fr}body.qr-mode .panel{order:-1;position:static}}
+@media(max-width:760px){
+body.qr-mode #send{position:fixed;left:12px;right:12px;bottom:12px;width:calc(100% - 24px);z-index:1000;margin:0;padding:16px 18px;border-radius:12px;box-shadow:0 4px 18px rgba(0,0,0,.24);touch-action:manipulation}
+body.qr-mode .wrap{padding-bottom:88px}
+body.qr-mode .panel{padding-bottom:78px}
+body.qr-mode #send:disabled{opacity:.75}
+}
 </style></head><body><div class="wrap">
 <header class="top"><div class="brand">MIXE<small>BRUNCH · CAFÉ · COCINA MEXICANA</small></div><nav class="topnav" aria-label="Navegación principal"><a href="#experiencias">El restaurante</a><a href="#carta">La carta</a><a href="https://www.mixe.com.mx/reservations" target="_blank" rel="noopener">Reservar</a><div class="badge" id="mesa"></div></nav></header>
 <section class="hero"><div class="hero-copy"><div class="eyebrow">QUERÉTARO · CENTRO HISTÓRICO</div><h1>Tu nuevo lugar favorito.</h1><p class="muted">Brunch, café y cocina mexicana con un toque de autor. Un espacio para encontrarnos alrededor de la mesa, el arte y la comunidad.</p><div class="hero-actions"><a class="primary" href="#carta">Explorar la carta ↓</a><a href="https://www.mixe.com.mx/reservations" target="_blank" rel="noopener noreferrer">Reservar mesa ↗</a></div></div><div class="hero-photo" role="img" aria-label="Fotografía publicada en el sitio oficial de Mixe"></div></section>
