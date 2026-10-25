@@ -56,7 +56,7 @@ const visitHasOrdersKey='mixeQrVisitHasOrders:'+m;
 function makeClientToken(){if(window.crypto&&typeof crypto.randomUUID==='function')return crypto.randomUUID();return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==='x'?r:(r&3|8)).toString(16)})}
 let deviceToken=localStorage.getItem(deviceTokenKey)||'';
 if(!/^[0-9a-f-]{36}$/i.test(deviceToken)){deviceToken=makeClientToken();localStorage.setItem(deviceTokenKey,deviceToken)}
-function getVisitToken(){let saved=null;try{saved=JSON.parse(localStorage.getItem(visitTokenKey)||'null')}catch(_e){}if(saved&&/^[0-9a-f-]{36}$/i.test(saved.token))return saved.token;try{saved=JSON.parse(sessionStorage.getItem(visitTokenKey)||'null')}catch(_e){}if(saved&&/^[0-9a-f-]{36}$/i.test(saved.token)){localStorage.setItem(visitTokenKey,JSON.stringify(saved));return saved.token}const token=makeClientToken();localStorage.setItem(visitTokenKey,JSON.stringify({token,startedAt:Date.now()}));return token}
+function getVisitToken(){const maxAge=4*60*60*1000;let saved=null;try{saved=JSON.parse(localStorage.getItem(visitTokenKey)||'null')}catch(_e){}if(saved&&/^[0-9a-f-]{36}$/i.test(saved.token)&&Number(saved.startedAt)>0&&Date.now()-Number(saved.startedAt)<maxAge)return saved.token;try{saved=JSON.parse(sessionStorage.getItem(visitTokenKey)||'null')}catch(_e){}if(saved&&/^[0-9a-f-]{36}$/i.test(saved.token)&&Number(saved.startedAt)>0&&Date.now()-Number(saved.startedAt)<maxAge){localStorage.setItem(visitTokenKey,JSON.stringify(saved));return saved.token}const token=makeClientToken();localStorage.setItem(visitTokenKey,JSON.stringify({token,startedAt:Date.now()}));return token}
 let clientToken=getVisitToken();
 function rotateVisitToken(){clientToken=makeClientToken();localStorage.setItem(visitTokenKey,JSON.stringify({token:clientToken,startedAt:Date.now()}));localStorage.removeItem(visitHasOrdersKey);qrOrderIds=[];localStorage.setItem(qrOrdersKey,'[]')}
 document.getElementById('send').onclick=async()=>{
@@ -78,6 +78,17 @@ document.getElementById('send').onclick=async()=>{
 const qrOrdersKey='mixeQrOrders:'+m;
 let qrOrderIds=[];
 try{let saved=JSON.parse(localStorage.getItem(qrOrdersKey)||'null');if(!Array.isArray(saved))saved=JSON.parse(sessionStorage.getItem(qrOrdersKey)||'[]');if(Array.isArray(saved)){qrOrderIds=saved.filter(x=>typeof x==='string'&&/^[0-9a-f-]{36}$/i.test(x)).slice(-10);localStorage.setItem(qrOrdersKey,JSON.stringify(qrOrderIds))}}catch(_e){}
+async function resumeClientSession(){
+ try{
+  const response=await fetch('https://mpbtxrhtfdbqyofrjszp.supabase.co/functions/v1/mixe-pos-api',{method:'POST',headers:{apikey:'sb_publishable_nizIqy4OjGKu3ckhCOMMrQ_zi2FwVib','Content-Type':'application/json'},body:JSON.stringify({action:'public_resume_session',table_code:m,device_token:deviceToken})});
+  const result=await response.json();
+  if(response.ok&&result.ok&&result.resumed&&/^[0-9a-f-]{36}$/i.test(String(result.client_token||''))){
+   clientToken=result.client_token;
+   localStorage.setItem(visitTokenKey,JSON.stringify({token:clientToken,startedAt:Date.now()}));
+   if(Array.isArray(result.orders)&&result.orders.length){qrOrderIds=Array.from(new Set([...qrOrderIds,...result.orders.map(o=>String(o.id))])).slice(-10);localStorage.setItem(qrOrdersKey,JSON.stringify(qrOrderIds));localStorage.setItem(visitHasOrdersKey,'1');}
+  }
+ }catch(_e){}
+}
 const orderStatusLabel={pending_confirmation:'Esperando confirmación del mesero',open:'Confirmado por el mesero',sent:'Enviado a cocina o barra',preparing:'En preparación',ready:'Listo para entregar',served:'Entregado; pendiente de pago',closed:'Pagado y cerrado',cancelled:'Pedido cancelado'};
 const itemStatusLabel={pending:'Pendiente',sent:'Enviado',preparing:'En preparación',ready:'Listo',served:'Entregado',void:'Cancelado'};
 function renderMyOrders(orders){
@@ -124,6 +135,6 @@ if(params.has('mesa')){
  ordering.classList.remove('hidden');
  document.getElementById('identityText').textContent='Pedido como invitado · '+table;
  document.title='Pedir en '+table+' · MIXE';
- refreshMyOrders();setInterval(refreshMyOrders,5000);
+ resumeClientSession().finally(()=>{refreshMyOrders();setInterval(refreshMyOrders,5000)});
 }
 </script></body></html>
