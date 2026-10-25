@@ -77,7 +77,10 @@ document.getElementById('send').onclick=async()=>{
   cart=[];drawCart();document.getElementById('note').value='';
   toast('Pedido recibido; espera confirmación del mesero. Folio '+String(order.id).slice(0,8)+' · Total '+money(order.total));
   await refreshMyOrders();
-  document.getElementById('myOrdersPanel')?.scrollIntoView({behavior:'smooth',block:'nearest'});
+  const ordersPanel=document.getElementById('myOrdersPanel');
+  if(ordersPanel&&!ordersPanel.hidden){
+   requestAnimationFrame(()=>setTimeout(()=>ordersPanel.scrollIntoView({behavior:'smooth',block:'end'}),120));
+  }
  }catch(err){toast(err.message||'Error al enviar el pedido.');}
  finally{button.disabled=false;button.textContent='Enviar pedido';}
 };
