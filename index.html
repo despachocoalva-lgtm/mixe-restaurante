@@ -79,7 +79,12 @@ document.getElementById('send').onclick=async()=>{
   await refreshMyOrders();
   const ordersPanel=document.getElementById('myOrdersPanel');
   if(ordersPanel&&!ordersPanel.hidden){
-   requestAnimationFrame(()=>setTimeout(()=>ordersPanel.scrollIntoView({behavior:'smooth',block:'end'}),120));
+   // En móviles el navegador puede ignorar scrollIntoView dentro de una columna sticky.
+   // Desplaza la página completa hasta el historial una vez que el panel se haya actualizado.
+   setTimeout(()=>{
+    const y=ordersPanel.getBoundingClientRect().top+window.scrollY;
+    window.scrollTo({top:Math.max(0,y-16),behavior:'smooth'});
+   },250);
   }
  }catch(err){toast(err.message||'Error al enviar el pedido.');}
  finally{button.disabled=false;button.textContent='Enviar pedido';}
