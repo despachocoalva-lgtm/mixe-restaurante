@@ -134,39 +134,49 @@ Deno.serve(async req=>{
    if(o.public_client_token){const {data:active,error:ae}=await db.from("orders").select("id").eq("public_client_token",o.public_client_token).in("status",["pending_confirmation","open","sent","preparing","ready","served"]);if(ae)throw ae;if(!active?.length){const {error:clear}=await db.from("orders").update({public_client_token:null,updated_at:new Date().toISOString()}).eq("public_client_token",o.public_client_token);if(clear)throw clear}}
    return out({ok:true,status:"cancelled"});
   }
+  if(action==="register_cash_movement"){
+   if(!allow(["admin","manager","cashier"]))return out({error:"Solo caja o administración puede registrar movimientos de efectivo."},403);
+   const amount=Number(body.amount),sessionId=String(body.session_id||"");
+   if(!sessionId||!Number.isFinite(amount)||amount<=0)return out({error:"Selecciona una caja abierta e indica un importe válido."},400);
+   const {data,error}=await db.rpc("mixe_register_cash_movement",{
+    p_session_id:sessionId,p_direction:String(body.direction||""),p_category:String(body.category||""),
+    p_amount:amount,p_notes:String(body.notes||"").slice(0,500),p_actor_id:staff.id
+   });
+   if(error)return out({error:error.message||"No se pudo registrar el movimiento de efectivo."},409);
+   return out(data);
+  }
   if(action==="cash_history"){
    if(!allow(["admin","manager","cashier"]))return out({error:"Solo caja o administración puede consultar el historial de cortes."},403);
    const {data:sessions,error:sessionError}=await db.from("cash_sessions").select("*").not("closed_at","is",null).order("closed_at",{ascending:false}).limit(30);
    if(sessionError)throw sessionError;
    const sessionIds=(sessions||[]).map(s=>s.id);
    const staffIds=[...new Set((sessions||[]).flatMap(s=>[s.opened_by,s.closed_by]).filter(Boolean))];
-   const [paymentResult,staffResult,legacyResult]=await Promise.all([
+   const [paymentResult,staffResult,legacyResult,movementResult]=await Promise.all([
     sessionIds.length?db.from("payments").select("id,order_id,cash_session_id,amount,tip_amount,method,status,created_at,provider_reference").in("cash_session_id",sessionIds).eq("status","confirmed").order("created_at",{ascending:false}):Promise.resolve({data:[],error:null}),
     staffIds.length?db.from("staff").select("id,display_name,role").in("id",staffIds):Promise.resolve({data:[],error:null}),
-    db.from("payments").select("id,amount,tip_amount").is("cash_session_id",null).eq("status","confirmed")
+    db.from("payments").select("id,amount,tip_amount").is("cash_session_id",null).eq("status","confirmed"),
+    sessionIds.length?db.from("cash_movements").select("id,cash_session_id,direction,category,amount,notes,created_by,created_at").in("cash_session_id",sessionIds).order("created_at",{ascending:false}):Promise.resolve({data:[],error:null})
    ]);
    if(paymentResult.error)throw paymentResult.error;
    if(staffResult.error)throw staffResult.error;
    if(legacyResult.error)throw legacyResult.error;
+   if(movementResult.error)throw movementResult.error;
    const people=new Map((staffResult.data||[]).map(x=>[x.id,x]));
-   const paymentsBySession=new Map();
-   for(const p of paymentResult.data||[]){
-    const list=paymentsBySession.get(p.cash_session_id)||[];
-    list.push(p);paymentsBySession.set(p.cash_session_id,list);
-   }
+   const movementStaffIds=[...new Set((movementResult.data||[]).map(m=>m.created_by).filter(Boolean))].filter(id=>!people.has(id));
+   if(movementStaffIds.length){const {data:extraStaff,error}=await db.from("staff").select("id,display_name,role").in("id",movementStaffIds);if(error)throw error;for(const person of extraStaff||[])people.set(person.id,person);}
+   const paymentsBySession=new Map(),movementsBySession=new Map();
+   for(const p of paymentResult.data||[]){const list=paymentsBySession.get(p.cash_session_id)||[];list.push(p);paymentsBySession.set(p.cash_session_id,list);}
+   for(const m of movementResult.data||[]){const list=movementsBySession.get(m.cash_session_id)||[];list.push({...m,created_by_name:people.get(m.created_by)?.display_name||"No identificado"});movementsBySession.set(m.cash_session_id,list);}
    const methodKeys=["cash","card","codi","transfer","online"];
    const history=(sessions||[]).map(s=>{
-    const payments=paymentsBySession.get(s.id)||[];
-    const summary={sales:0,tips:0,cash:0,card:0,codi:0,transfer:0,online:0,paymentCount:payments.length};
-    for(const p of payments){
-     const amount=Number(p.amount||0),tip=Number(p.tip_amount||0);
-     summary.sales+=amount;summary.tips+=tip;
-     if(methodKeys.includes(p.method))summary[p.method]+=amount+tip;
-    }
-    summary.expectedCash=Number(s.opening_float||0)+summary.cash;
+    const payments=paymentsBySession.get(s.id)||[],movements=movementsBySession.get(s.id)||[];
+    const summary={sales:0,tips:0,cash:0,cashIn:0,cashOut:0,card:0,codi:0,transfer:0,online:0,paymentCount:payments.length};
+    for(const p of payments){const amount=Number(p.amount||0),tip=Number(p.tip_amount||0);summary.sales+=amount;summary.tips+=tip;if(methodKeys.includes(p.method))summary[p.method]+=amount+tip;}
+    for(const m of movements){if(m.direction==="in")summary.cashIn+=Number(m.amount||0);else summary.cashOut+=Number(m.amount||0);}
+    summary.expectedCash=Number(s.opening_float||0)+summary.cash+summary.cashIn-summary.cashOut;
     summary.closingCash=s.closing_cash===null?null:Number(s.closing_cash);
     summary.difference=summary.closingCash===null?null:summary.closingCash-summary.expectedCash;
-    return {...s,opened_by_name:people.get(s.opened_by)?.display_name||"No identificado",closed_by_name:people.get(s.closed_by)?.display_name||"No identificado",summary,payments};
+    return {...s,opened_by_name:people.get(s.opened_by)?.display_name||"No identificado",closed_by_name:people.get(s.closed_by)?.display_name||"No identificado",summary,payments,movements};
    });
    const legacy=legacyResult.data||[];
    return out({sessions:history,limit:30,unassigned:{count:legacy.length,sales:legacy.reduce((n,p)=>n+Number(p.amount||0),0),tips:legacy.reduce((n,p)=>n+Number(p.tip_amount||0),0)}});
@@ -176,16 +186,23 @@ Deno.serve(async req=>{
    const {data:openSession,error:se}=await db.from("cash_sessions").select("*").is("closed_at",null).order("opened_at",{ascending:false}).limit(1).maybeSingle();if(se)throw se;
    const {data:lastSession,error:le}=await db.from("cash_sessions").select("*").not("closed_at","is",null).order("closed_at",{ascending:false}).limit(1).maybeSingle();if(le)throw le;
    const reportSession=openSession||lastSession;
-   let payments=[];
+   let payments=[],movements=[];
    if(reportSession){
-    const {data:rows,error:pe}=await db.from("payments").select("id,order_id,cash_session_id,amount,tip_amount,method,status,created_at").eq("cash_session_id",reportSession.id).eq("status","confirmed").order("created_at");if(pe)throw pe;payments=rows||[];
+    const [pr,mr]=await Promise.all([
+     db.from("payments").select("id,order_id,cash_session_id,amount,tip_amount,method,status,created_at").eq("cash_session_id",reportSession.id).eq("status","confirmed").order("created_at"),
+     db.from("cash_movements").select("id,cash_session_id,direction,category,amount,notes,created_by,created_at").eq("cash_session_id",reportSession.id).order("created_at",{ascending:false})
+    ]);
+    if(pr.error)throw pr.error;if(mr.error)throw mr.error;payments=pr.data||[];movements=mr.data||[];
+    const movementStaffIds=[...new Set(movements.map(m=>m.created_by).filter(Boolean))];
+    if(movementStaffIds.length){const {data:people,error}=await db.from("staff").select("id,display_name").in("id",movementStaffIds);if(error)throw error;const names=new Map((people||[]).map(x=>[x.id,x.display_name]));movements=movements.map(m=>({...m,created_by_name:names.get(m.created_by)||"No identificado"}));}
    }
-   const summary={sales:0,tips:0,cash:0,card:0,codi:0,transfer:0,online:0,paymentCount:payments.length};
+   const summary={sales:0,tips:0,cash:0,cashIn:0,cashOut:0,card:0,codi:0,transfer:0,online:0,paymentCount:payments.length};
    for(const p of payments){const amount=Number(p.amount||0),tip=Number(p.tip_amount||0);summary.sales+=amount;summary.tips+=tip;if(["cash","card","codi","transfer","online"].includes(p.method))summary[p.method]+=amount+tip;}
-   summary.expectedCash=Number(reportSession?.opening_float||0)+summary.cash;
+   for(const m of movements){if(m.direction==="in")summary.cashIn+=Number(m.amount||0);else summary.cashOut+=Number(m.amount||0);}
+   summary.expectedCash=Number(reportSession?.opening_float||0)+summary.cash+summary.cashIn-summary.cashOut;
    summary.closingCash=reportSession?.closing_cash===null||reportSession?.closing_cash===undefined?null:Number(reportSession.closing_cash);
    summary.difference=summary.closingCash===null?null:summary.closingCash-summary.expectedCash;
-   return out({session:openSession||null,lastSession:lastSession||null,summary});
+   return out({session:openSession||null,lastSession:lastSession||null,summary,movements});
   }
   if(action==="open_cash_session"){
    if(!allow(["admin","manager","cashier"]))return out({error:"Solo caja o administración puede abrir caja."},403);
