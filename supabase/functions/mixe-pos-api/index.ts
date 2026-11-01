@@ -179,7 +179,7 @@ Deno.serve(async req=>{
    const activeOrderIds=(orders.data||[]).map(o=>o.id);
    let payments=[];
    if(activeOrderIds.length){
-    const {data:paymentRows,error:paymentError}=await db.from("payments").select("id,order_id,cash_session_id,amount,tip_amount,method,status,confirmed_at,created_at").in("order_id",activeOrderIds).order("created_at");
+    const {data:paymentRows,error:paymentError}=await db.from("payments").select("id,order_id,cash_session_id,amount,tip_amount,method,status,confirmed_at,created_at,idempotency_key").in("order_id",activeOrderIds).order("created_at");
     if(paymentError)throw paymentError;
     payments=paymentRows||[];
    }
