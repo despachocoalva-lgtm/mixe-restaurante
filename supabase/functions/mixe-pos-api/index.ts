@@ -317,6 +317,53 @@ Deno.serve(async req=>{
    if(Number(on_hand)!==0){const {error:me}=await db.from("stock_movements").insert({ingredient_id:data.id,quantity_delta:on_hand,reason:"adjustment",unit_cost_snapshot:unit_cost});if(me)throw me}
    return out({ingredient:data});
   }
+  if(action==="manager_dashboard"){
+   if(!allow(["admin","manager"]))return out({error:"Solo administración puede consultar indicadores gerenciales."},403);
+   const days=Number(body.days||30);
+   if(![7,30,90].includes(days))return out({error:"Periodo no permitido."},400);
+   const from=new Date(Date.now()-days*86400000).toISOString();
+   const [pay,items,orders,movements]=await Promise.all([
+    db.from("payments").select("order_id,amount,tip_amount,method,confirmed_at,created_at").eq("status","confirmed").gte("confirmed_at",from).order("confirmed_at",{ascending:false}).limit(2000),
+    db.from("order_items").select("order_id,quantity,unit_price,unit_cost_snapshot,status,products(name,category),orders!inner(status,closed_at)").eq("orders.status","closed").gte("orders.closed_at",from).neq("status","void").limit(4000),
+    db.from("orders").select("id,status,total,closed_at").eq("status","closed").gte("closed_at",from).limit(2000),
+    db.from("cash_movements").select("direction,category,amount,created_at").gte("created_at",from).limit(2000)
+   ]);
+   for(const x of [pay,items,orders,movements])if(x.error)throw x.error;
+   const tz="America/Mexico_City",dayFmt=new Intl.DateTimeFormat("en-CA",{timeZone:tz,year:"numeric",month:"2-digit",day:"2-digit"}),hrFmt=new Intl.DateTimeFormat("en-US",{timeZone:tz,hour:"2-digit",hour12:false});
+   const n=x=>Number(x||0);
+   const daily=new Map(),hourly=new Map(),methods={cash:0,card:0,codi:0,transfer:0,online:0};
+   let sales=0,tips=0;
+   for(const p of pay.data||[]){
+    const amount=n(p.amount),tip=n(p.tip_amount),date=new Date(p.confirmed_at||p.created_at);
+    sales+=amount;tips+=tip;
+    const day=dayFmt.format(date),hour=hrFmt.format(date);
+    daily.set(day,(daily.get(day)||0)+amount);
+    hourly.set(hour,(hourly.get(hour)||0)+amount);
+    if(Object.prototype.hasOwnProperty.call(methods,p.method))methods[p.method]+=amount+tip;
+   }
+   const products=new Map();let productRevenue=0,ingredientsCost=0;
+   for(const i of items.data||[]){
+    const name=i.products?.name||"Sin nombre",category=i.products?.category||"Otros",key=name+" / "+category;
+    const value=n(i.quantity)*n(i.unit_price),cost=n(i.quantity)*n(i.unit_cost_snapshot);
+    const item=products.get(key)||{product:name,category,units:0,revenue:0,ingredient_cost:0};
+    item.units+=n(i.quantity);item.revenue+=value;item.ingredient_cost+=cost;
+    productRevenue+=value;ingredientsCost+=cost;products.set(key,item);
+   }
+   let cashIn=0,cashOut=0,operationalExpenses=0;
+   for(const m of movements.data||[]){
+    if(m.direction==="in")cashIn+=n(m.amount);
+    if(m.direction==="out"){cashOut+=n(m.amount);if(m.category==="expense")operationalExpenses+=n(m.amount);}
+   }
+   return out({
+    periodDays:days,from,timezone:tz,
+    summary:{collectedSales:sales,tips,closedOrders:(orders.data||[]).length,trackedProductRevenue:productRevenue,ingredientCost:ingredientsCost,estimatedProductContribution:productRevenue-ingredientsCost,recordedCashExpenses:operationalExpenses,cashIn,cashOut,paymentCount:(pay.data||[]).length},
+    daily:[...daily].sort((a,b)=>a[0].localeCompare(b[0])).map(([day,amount])=>({day,amount})),
+    hourly:[...hourly].sort((a,b)=>a[0].localeCompare(b[0])).map(([hour,amount])=>({hour,amount})),
+    methods,products:[...products.values()].map(p=>({...p,contribution:p.revenue-p.ingredient_cost})).sort((a,b)=>b.units-a.units).slice(0,30),
+    warnings:["Ventas cobradas: por fecha de pago confirmado. Rentabilidad de platillos: cuentas cerradas en el periodo; no es directamente comparable con la cobranza del mismo periodo.","El costo de ingredientes utiliza el costo capturado en cada partida. No incluye renta, nómina, comisiones ni todos los gastos del restaurante.","Los movimientos de caja no equivalen a gastos contables: los retiros y traslados de efectivo no se restan como gasto.","Ventas por empleado no disponibles: los pagos históricos no identifican al empleado que los registró."],
+    truncated:(pay.data||[]).length===2000||(items.data||[]).length===4000||(orders.data||[]).length===2000||(movements.data||[]).length===2000
+   });
+  }
   if(action==="report"){
    if(!allow(["admin","manager","cashier"]))return out({error:"Sin permiso para reportes."},403);
    const {data:items,error}=await db.from("order_items").select("product_id,quantity,unit_price,unit_cost_snapshot,status,products(name,category),orders!inner(status)").eq("orders.status","closed").neq("status","void");if(error)throw error;
