@@ -134,6 +134,43 @@ Deno.serve(async req=>{
    if(o.public_client_token){const {data:active,error:ae}=await db.from("orders").select("id").eq("public_client_token",o.public_client_token).in("status",["pending_confirmation","open","sent","preparing","ready","served"]);if(ae)throw ae;if(!active?.length){const {error:clear}=await db.from("orders").update({public_client_token:null,updated_at:new Date().toISOString()}).eq("public_client_token",o.public_client_token);if(clear)throw clear}}
    return out({ok:true,status:"cancelled"});
   }
+  if(action==="cash_history"){
+   if(!allow(["admin","manager","cashier"]))return out({error:"Solo caja o administración puede consultar el historial de cortes."},403);
+   const {data:sessions,error:sessionError}=await db.from("cash_sessions").select("*").not("closed_at","is",null).order("closed_at",{ascending:false}).limit(30);
+   if(sessionError)throw sessionError;
+   const sessionIds=(sessions||[]).map(s=>s.id);
+   const staffIds=[...new Set((sessions||[]).flatMap(s=>[s.opened_by,s.closed_by]).filter(Boolean))];
+   const [paymentResult,staffResult,legacyResult]=await Promise.all([
+    sessionIds.length?db.from("payments").select("id,order_id,cash_session_id,amount,tip_amount,method,status,created_at,provider_reference").in("cash_session_id",sessionIds).eq("status","confirmed").order("created_at",{ascending:false}):Promise.resolve({data:[],error:null}),
+    staffIds.length?db.from("staff").select("id,display_name,role").in("id",staffIds):Promise.resolve({data:[],error:null}),
+    db.from("payments").select("id,amount,tip_amount").is("cash_session_id",null).eq("status","confirmed")
+   ]);
+   if(paymentResult.error)throw paymentResult.error;
+   if(staffResult.error)throw staffResult.error;
+   if(legacyResult.error)throw legacyResult.error;
+   const people=new Map((staffResult.data||[]).map(x=>[x.id,x]));
+   const paymentsBySession=new Map();
+   for(const p of paymentResult.data||[]){
+    const list=paymentsBySession.get(p.cash_session_id)||[];
+    list.push(p);paymentsBySession.set(p.cash_session_id,list);
+   }
+   const methodKeys=["cash","card","codi","transfer","online"];
+   const history=(sessions||[]).map(s=>{
+    const payments=paymentsBySession.get(s.id)||[];
+    const summary={sales:0,tips:0,cash:0,card:0,codi:0,transfer:0,online:0,paymentCount:payments.length};
+    for(const p of payments){
+     const amount=Number(p.amount||0),tip=Number(p.tip_amount||0);
+     summary.sales+=amount;summary.tips+=tip;
+     if(methodKeys.includes(p.method))summary[p.method]+=amount+tip;
+    }
+    summary.expectedCash=Number(s.opening_float||0)+summary.cash;
+    summary.closingCash=s.closing_cash===null?null:Number(s.closing_cash);
+    summary.difference=summary.closingCash===null?null:summary.closingCash-summary.expectedCash;
+    return {...s,opened_by_name:people.get(s.opened_by)?.display_name||"No identificado",closed_by_name:people.get(s.closed_by)?.display_name||"No identificado",summary,payments};
+   });
+   const legacy=legacyResult.data||[];
+   return out({sessions:history,limit:30,unassigned:{count:legacy.length,sales:legacy.reduce((n,p)=>n+Number(p.amount||0),0),tips:legacy.reduce((n,p)=>n+Number(p.tip_amount||0),0)}});
+  }
   if(action==="cash_summary"){
    if(!allow(["admin","manager","cashier"]))return out({error:"Solo caja o administración puede consultar el corte."},403);
    const {data:openSession,error:se}=await db.from("cash_sessions").select("*").is("closed_at",null).order("opened_at",{ascending:false}).limit(1).maybeSingle();if(se)throw se;
