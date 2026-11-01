@@ -326,6 +326,26 @@ Deno.serve(async req=>{
    if(error)return out({error:error.message||"No se pudo actualizar el inventario."},409);
    return out({ok:true,stock:data});
   }
+  if(action==="recipe_cost_history"){
+   if(!allow(["admin","manager"]))return out({error:"Solo administración puede consultar historial de costos."},403);
+   const [moves,products,recipes,ingredients]=await Promise.all([
+    db.from("stock_movements").select("ingredient_id,quantity_delta,unit_cost_snapshot,created_at,reason").eq("reason","purchase").order("created_at",{ascending:false}).limit(1000),
+    db.from("products").select("id,name,price,active").eq("active",true),
+    db.from("recipes").select("product_id,ingredient_id,quantity"),
+    db.from("ingredients").select("id,name,unit,unit_cost,active").eq("active",true)
+   ]);
+   for(const q of [moves,products,recipes,ingredients])if(q.error)throw q.error;
+   const ingredientMap=new Map((ingredients.data||[]).map(i=>[i.id,i]));
+   const purchaseHistory=(moves.data||[]).map(m=>({...m,ingredient_name:ingredientMap.get(m.ingredient_id)?.name||"Insumo desactivado",unit:ingredientMap.get(m.ingredient_id)?.unit||""}));
+   const recipeMap=new Map();for(const r of recipes.data||[]){const a=recipeMap.get(r.product_id)||[];a.push(r);recipeMap.set(r.product_id,a)}
+   const productCosts=(products.data||[]).map(p=>{
+    const rs=recipeMap.get(p.id)||[],missing=rs.filter(r=>!ingredientMap.has(r.ingredient_id));
+    const cost=rs.reduce((total,r)=>total+Number(r.quantity||0)*Number(ingredientMap.get(r.ingredient_id)?.unit_cost||0),0);
+    const price=Number(p.price||0),margin=price-cost;
+    return {id:p.id,name:p.name,price,cost,margin,marginPct:price?100*margin/price:null,recipeItems:rs.length,missingIngredients:missing.length};
+   }).sort((a,b)=>a.marginPct-b.marginPct);
+   return out({productCosts,purchaseHistory,truncated:(moves.data||[]).length===1000,note:"Costeo actual de receta. Los precios de compra guardados por movimiento no modifican costos históricos de ventas ya cerradas."});
+  }
   if(action==="manager_dashboard"){
    if(!allow(["admin","manager"]))return out({error:"Solo administración puede consultar indicadores gerenciales."},403);
    const days=Number(body.days||30);
