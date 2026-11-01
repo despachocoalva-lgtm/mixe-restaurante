@@ -317,6 +317,15 @@ Deno.serve(async req=>{
    if(Number(on_hand)!==0){const {error:me}=await db.from("stock_movements").insert({ingredient_id:data.id,quantity_delta:on_hand,reason:"adjustment",unit_cost_snapshot:unit_cost});if(me)throw me}
    return out({ingredient:data});
   }
+  if(action==="adjust_stock_safe"){
+   if(!allow(["admin","manager"]))return out({error:"Solo gerencia puede registrar compras y mermas."},403);
+   const quantity=Number(body.quantity),unitCost=Number(body.unit_cost),reason=String(body.reason||"");
+   if(!Number.isFinite(quantity)||quantity<=0||!Number.isFinite(unitCost)||unitCost<0||!["purchase","waste"].includes(reason))return out({error:"Cantidad, costo o concepto inválido."},400);
+   const delta=reason==="waste"?-quantity:quantity;
+   const {data,error}=await db.rpc("adjust_stock_safe",{p_ingredient:body.ingredient_id,p_delta:delta,p_reason:reason,p_unit_cost:unitCost});
+   if(error)return out({error:error.message||"No se pudo actualizar el inventario."},409);
+   return out({ok:true,stock:data});
+  }
   if(action==="manager_dashboard"){
    if(!allow(["admin","manager"]))return out({error:"Solo administración puede consultar indicadores gerenciales."},403);
    const days=Number(body.days||30);
