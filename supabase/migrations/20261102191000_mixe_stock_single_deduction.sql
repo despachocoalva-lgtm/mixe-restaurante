@@ -21,8 +21,8 @@ begin
    end if;
  end if;
  if new.status='void' then
-  for r in select ingredient_id,sum(case when reason='recipe' then -quantity_delta when reason='return' then -quantity_delta else 0 end) as net_qty,max(unit_cost_snapshot) as unit_cost
-  from mixe.stock_movements where order_item_id=new.id and reason in ('recipe','return') group by ingredient_id loop
+  for r in select ingredient_id,sum(case when reason in ('recipe','return','adjustment') then -quantity_delta else 0 end) as net_qty,max(unit_cost_snapshot) as unit_cost
+  from mixe.stock_movements where order_item_id=new.id and reason in ('recipe','return','adjustment') group by ingredient_id loop
    if r.net_qty>0 then
     perform 1 from mixe.ingredients where id=r.ingredient_id for update;
     update mixe.ingredients set on_hand=on_hand+r.net_qty where id=r.ingredient_id;
