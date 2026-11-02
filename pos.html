@@ -57,7 +57,7 @@ if(tab==="Mesas"){
    card+=splits.map(sp=>{const paid=(state.payments||[]).filter(p=>p.split_id===sp.id&&p.status==="confirmed").reduce((sum,p)=>sum+Number(p.amount||0),0);const due=Math.max(0,Number(sp.amount_due)-paid);return '<div class="row" style="border-top:1px solid var(--line);padding:8px 0"><span><strong>'+esc(sp.label)+'</strong> · '+money(sp.amount_due)+' · pagado '+money(paid)+' · saldo '+money(due)+'</span><span class="pill">'+(due<=.009?"Liquidada":paid>0?"Abono parcial":"Pendiente")+'</span></div>'}).join("");
    if(!hasPayments)card+='<button class="danger" data-cancelsplits="'+o.id+'">Cancelar división</button>';
    card+='</div>';
-  }else if(!hasPayments&&o.payment_status==="unpaid"&&!["closed","cancelled","pending_confirmation"].includes(o.status)&&Number(o.total)>0){
+  }else if(o.source!=="qr"&&!hasPayments&&o.payment_status==="unpaid"&&!["closed","cancelled","pending_confirmation"].includes(o.status)&&Number(o.total)>0){
    card+='<div class="card"><h3>Dividir cuenta</h3><p class="muted">Divide el total en partes iguales. Los centavos sobrantes se distribuyen automáticamente. Cada persona podrá pagar completa o parcialmente.</p><div class="row"><label for="split-count-'+o.id+'">Número de personas (2 a 12)</label><input id="split-count-'+o.id+'" type="number" min="2" max="12" step="1" value="2" style="max-width:100px"><button data-splitorder="'+o.id+'">Crear cuentas divididas</button></div></div>';
   }
   return card+'</div>';
