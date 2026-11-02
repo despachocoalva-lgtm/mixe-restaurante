@@ -326,6 +326,26 @@ Deno.serve(async req=>{
    if(error)return out({error:error.message||"No se pudo actualizar el inventario."},409);
    return out({ok:true,stock:data});
   }
+  if(action==="purchase_catalog"){
+   if(!allow(["admin","manager"]))return out({error:"Solo administración."},403);
+   const [suppliers,purchases]=await Promise.all([db.from("suppliers").select("id,name,tax_id,phone").eq("active",true).order("name"),db.from("purchases").select("id,supplier_id,invoice_ref,purchased_at,total,suppliers(name)").order("purchased_at",{ascending:false}).limit(30)]);
+   if(suppliers.error)throw suppliers.error;if(purchases.error)throw purchases.error;
+   return out({suppliers:suppliers.data,purchases:purchases.data});
+  }
+  if(action==="create_supplier"){
+   if(!allow(["admin","manager"]))return out({error:"Solo administración."},403);
+   const name=String(body.name||"").trim().slice(0,120);
+   if(name.length<3)return out({error:"Captura el nombre del proveedor."},400);
+   const {data,error}=await db.from("suppliers").insert({name,tax_id:String(body.tax_id||"").trim().slice(0,20)||null,phone:String(body.phone||"").trim().slice(0,25)||null}).select().single();
+   if(error)return out({error:error.message},409);return out({supplier:data});
+  }
+  if(action==="record_purchase"){
+   if(!allow(["admin","manager"]))return out({error:"Solo administración."},403);
+   const items=Array.isArray(body.items)?body.items:[];
+   if(!body.supplier_id||items.length<1||items.length>50)return out({error:"Selecciona proveedor e insumos."},400);
+   const {data,error}=await db.rpc("record_purchase",{p_supplier:body.supplier_id,p_invoice:String(body.invoice_ref||"").slice(0,120),p_items:items,p_actor:staff.id});
+   if(error)return out({error:error.message},409);return out({purchase:data});
+  }
   if(action==="recipe_cost_history"){
    if(!allow(["admin","manager"]))return out({error:"Solo administración puede consultar historial de costos."},403);
    const [moves,products,recipes,ingredients]=await Promise.all([
