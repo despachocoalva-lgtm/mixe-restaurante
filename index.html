@@ -66,7 +66,8 @@ function getVisitToken(){const maxAge=4*60*60*1000;let saved=null;try{saved=JSON
 let clientToken=getVisitToken();
 function rotateVisitToken(){clientToken=makeClientToken();localStorage.setItem(visitTokenKey,JSON.stringify({token:clientToken,startedAt:Date.now()}));localStorage.removeItem(visitHasOrdersKey);qrOrderIds=[];localStorage.setItem(qrOrdersKey,'[]')}
 document.getElementById('send').onclick=async()=>{
- if(!tableCodeValid){toast('Escanea el QR o acerca tu celular a la etiqueta NFC de tu mesa.');return}\n if(!cart.length){toast('Agrega un producto primero.');return}
+ if(!tableCodeValid){toast('Escanea el QR o acerca tu celular a la etiqueta NFC de tu mesa.');return}
+ if(!cart.length){toast('Agrega un producto primero.');return}
  const button=document.getElementById('send');button.disabled=true;button.textContent='Enviando pedido…';
  try{
   const payload={action:'public_order',table_code:m,client_token:clientToken,device_token:deviceToken,notes:document.getElementById('note').value.trim(),items:cart.map(x=>({name:ps.find(p=>p[0]===x.id)[1],quantity:x.q,option_label:x.option||null,notes:x.note||null}))};
