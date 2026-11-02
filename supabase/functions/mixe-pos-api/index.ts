@@ -14,9 +14,9 @@ Deno.serve(async req=>{
    const clientToken=String(body.client_token||"");
    const deviceToken=String(body.device_token||"");
    if(!/^[0-9a-f-]{36}$/i.test(clientToken))return out({error:"Identificador de visita inválido."},400);
-   if(deviceToken&&!/^[0-9a-f-]{36}$/i.test(deviceToken))return out({error:"Identificador de dispositivo inválido."},400);
+   if(!/^[0-9a-f-]{36}$/i.test(deviceToken))return out({error:"Identificador de dispositivo inválido."},400);
    const items=Array.isArray(body.items)?body.items:[];
-   if(!tableCode||items.length<1||items.length>12)return out({error:"Selecciona una mesa válida y entre 1 y 12 productos."},400);
+   if(!tableCode||items.length<1||items.length>12)return out({error:"Selecciona una mesa válida y envía entre 1 y 12 productos."},400);
    const {data:table,error:te}=await db.from("tables").select("id,code,active").eq("code",tableCode).eq("active",true).maybeSingle();
    if(te)throw te;if(!table)return out({error:"La mesa no existe o está deshabilitada."},404);
    const clean=[];
@@ -27,19 +27,27 @@ Deno.serve(async req=>{
     if(pe)throw pe;if(!p)return out({error:"Producto no disponible: "+name},400);
     const {data:recipes,error:re}=await db.from("recipes").select("ingredient_id,quantity,ingredients(id,name,on_hand,active)").eq("product_id",p.id);
     if(re)throw re;if(!recipes?.length)return out({error:"El platillo no tiene receta configurada: "+name},409);
-    clean.push({product:p,quantity,option_label:String(raw.option_label||"").slice(0,100)||null,notes:String(raw.notes||"").slice(0,160)||null});
+    clean.push({product_id:p.id,quantity,option_label:String(raw.option_label||"").slice(0,100)||null,notes:String(raw.notes||"").slice(0,160)||null});
    }
-   const {data:order,error:oe}=await db.from("orders").insert({table_id:table.id,source:"qr",status:"pending_confirmation",notes:String(body.notes||"").slice(0,300)||null,public_client_token:clientToken,public_device_token:deviceToken||null}).select("id,table_id,status,opened_at").single();
-   if(oe)throw oe;
-   let total=0;
-   for(const line of clean){
-    const {data:item,error:ie}=await db.from("order_items").insert({order_id:order.id,product_id:line.product.id,quantity:line.quantity,unit_price:line.product.price,option_label:line.option_label,notes:line.notes,status:"pending"}).select("id").single();
-    if(ie){await db.from("orders").update({status:"cancelled"}).eq("id",order.id);throw ie;}
-    total+=Number(line.product.price)*line.quantity;
-   }
-   const {error:up}=await db.from("orders").update({subtotal:total,total:total,updated_at:new Date().toISOString()}).eq("id",order.id);if(up)throw up;
-   const {data:finalOrder,error:fo}=await db.from("orders").select("id,status,total,source,opened_at,tables(code),order_items(id,product_id,quantity,unit_price,option_label,notes,status,products(name))").eq("id",order.id).single();if(fo)throw fo;
-   return out({ok:true,order:finalOrder,message:"Pedido recibido. Espera la confirmación del mesero."},201);
+   const {data:submitted,error:submitError}=await db.rpc("mixe_submit_qr_order",{
+    p_table_id:table.id,
+    p_client_token:clientToken,
+    p_device_token:deviceToken,
+    p_notes:String(body.notes||"").slice(0,300)||null,
+    p_items:clean
+   });
+   if(submitError)return out({error:submitError.message||"No se pudo agregar el pedido a tu cuenta."},409);
+   const orderId=String(submitted?.order_id||"");
+   if(!/^[0-9a-f-]{36}$/i.test(orderId))throw new Error("La cuenta se procesó sin devolver un folio válido.");
+   const {data:finalOrder,error:fo}=await db.from("orders").select("id,status,total,source,opened_at,tables(code),order_items(id,product_id,quantity,unit_price,option_label,notes,status,products(name))").eq("id",orderId).single();
+   if(fo)throw fo;
+   return out({
+    ok:true,
+    order:finalOrder,
+    reused:!!submitted.reused,
+    items_added:Number(submitted.items_added||clean.length),
+    message:submitted.reused?"Productos agregados a tu cuenta individual.":"Cuenta individual creada. Espera la confirmación del mesero."
+   },submitted.reused?200:201);
   }
   if(action==="public_resume_session"){
    if(req.method!=="POST")return out({error:"Método inválido."},405);
@@ -50,11 +58,11 @@ Deno.serve(async req=>{
    const {data:table,error:te}=await db.from("tables").select("id,code").eq("code",tableCode).eq("active",true).maybeSingle();
    if(te)throw te;if(!table)return out({error:"La mesa no existe o está deshabilitada."},404);
    const cutoff=new Date(Date.now()-4*60*60*1000).toISOString();
-   const {data:latest,error:le}=await db.from("orders").select("id,public_client_token,opened_at").eq("table_id",table.id).eq("public_device_token",deviceToken).gte("opened_at",cutoff).in("status",["pending_confirmation","open","sent","preparing","ready","served"]).not("public_client_token","is",null).order("opened_at",{ascending:false}).limit(1).maybeSingle();
+   const {data:latest,error:le}=await db.from("orders").select("id,public_client_token,opened_at").eq("table_id",table.id).eq("source","qr").eq("public_device_token",deviceToken).gte("opened_at",cutoff).in("status",["pending_confirmation","open","sent","preparing","ready","served"]).not("public_client_token","is",null).order("opened_at",{ascending:false}).limit(1).maybeSingle();
    if(le)throw le;
    if(!latest?.public_client_token)return out({ok:true,resumed:false,orders:[]});
    const clientToken=String(latest.public_client_token);
-   const {data:orders,error:oe}=await db.from("orders").select("id,status,total,payment_status,opened_at,updated_at,tables(code),order_items(id,quantity,unit_price,option_label,notes,status,products(name,category))").eq("table_id",table.id).eq("public_client_token",clientToken).order("opened_at",{ascending:false}).limit(10);
+   const {data:orders,error:oe}=await db.from("orders").select("id,status,total,payment_status,opened_at,updated_at,tables(code),order_items(id,quantity,unit_price,option_label,notes,status,products(name,category))").eq("table_id",table.id).eq("source","qr").eq("public_client_token",clientToken).order("opened_at",{ascending:false}).limit(10);
    if(oe)throw oe;
    return out({ok:true,resumed:true,client_token:clientToken,orders:orders||[]});
   }
@@ -80,7 +88,7 @@ Deno.serve(async req=>{
    if(te)throw te;if(!table)return out({error:"La mesa no existe o está deshabilitada."},404);
    const clientToken=String(body.client_token||"");
    if(!/^[0-9a-f-]{36}$/i.test(clientToken))return out({error:"Identificador de visita inválido."},400);
-   const {data:order,error:oe}=await db.from("orders").select("id,status,total,payment_status,opened_at,updated_at,tables(code),order_items(id,quantity,unit_price,option_label,notes,status,products(name,category))").eq("id",orderId).eq("table_id",table.id).eq("public_client_token",clientToken).maybeSingle();
+   const {data:order,error:oe}=await db.from("orders").select("id,status,total,payment_status,opened_at,updated_at,tables(code),order_items(id,quantity,unit_price,option_label,notes,status,products(name,category))").eq("id",orderId).eq("table_id",table.id).eq("source","qr").eq("public_client_token",clientToken).maybeSingle();
    if(oe)throw oe;if(!order)return out({error:"No encontramos ese pedido para esta mesa."},404);
    return out({ok:true,order});
   }
