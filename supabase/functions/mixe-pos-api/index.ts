@@ -231,13 +231,17 @@ Deno.serve(async req=>{
     db.from("recipes").select("product_id,ingredient_id,quantity,products(name),ingredients(name,unit,unit_cost)").order("product_id")]);
    for(const q of [tables,products,orders,ingredients,employees,recipes])if(q.error)throw q.error;
    const activeOrderIds=(orders.data||[]).map(o=>o.id);
-   let payments=[];
+   let payments=[],orderSplits=[];
    if(activeOrderIds.length){
-    const {data:paymentRows,error:paymentError}=await db.from("payments").select("id,order_id,cash_session_id,amount,tip_amount,method,status,confirmed_at,created_at,idempotency_key").in("order_id",activeOrderIds).order("created_at");
+    const {data:splitRows,error:splitError}=await db.from("order_splits").select("*").in("order_id",activeOrderIds).order("created_at");
+    if(splitError)throw splitError;orderSplits=splitRows||[];
+   }
+   if(activeOrderIds.length){
+    const {data:paymentRows,error:paymentError}=await db.from("payments").select("id,order_id,split_id,cash_session_id,amount,tip_amount,method,status,confirmed_at,created_at,idempotency_key").in("order_id",activeOrderIds).order("created_at");
     if(paymentError)throw paymentError;
     payments=paymentRows||[];
    }
-   return out({staff,tables:tables.data,products:products.data,orders:orders.data,payments,ingredients:ingredients.data,employees:employees.data,recipes:recipes.data});
+   return out({staff,tables:tables.data,products:products.data,orders:orders.data,payments,orderSplits,ingredients:ingredients.data,employees:employees.data,recipes:recipes.data});
   }
   if(action==="create_staff"){
    if(staff.role!=="admin")return out({error:"Solo el administrador principal puede dar de alta personal."},403);
@@ -275,6 +279,21 @@ Deno.serve(async req=>{
    if(itemError)return out({error:itemError.message||"No se pudo actualizar el estado."},409);
    return out({item:itemResult});
   }
+  if(action==="split_order"){
+   if(!allow(["admin","manager","cashier","server"]))return out({error:"Tu rol no puede dividir cuentas."},403);
+   const count=Number(body.count),orderId=String(body.order_id||"");
+   if(!/^[0-9a-f-]{36}$/i.test(orderId)||!Number.isInteger(count)||count<2||count>12)return out({error:"Selecciona una cuenta y entre 2 y 12 personas."},400);
+   const {data,error}=await admin.rpc("mixe_create_equal_splits",{p_order_id:orderId,p_count:count,p_actor_id:staff.id});
+   if(error)return out({error:error.message||"No se pudo dividir la cuenta."},409);
+   return out(data);
+  }
+  if(action==="cancel_order_splits"){
+   if(!allow(["admin","manager","cashier","server"]))return out({error:"Tu rol no puede cancelar la división."},403);
+   const orderId=String(body.order_id||"");if(!/^[0-9a-f-]{36}$/i.test(orderId))return out({error:"Cuenta inválida."},400);
+   const {data,error}=await admin.rpc("mixe_cancel_order_splits",{p_order_id:orderId,p_actor_id:staff.id});
+   if(error)return out({error:error.message||"No se pudo cancelar la división."},409);
+   return out(data);
+  }
   if(action==="pay_order"){
    if(!allow(["admin","manager","cashier"]))return out({error:"Solo caja o administración puede registrar pagos."},403);
    const {order_id,method,amount,tip_amount=0,provider_reference,idempotency_key}=body;
@@ -291,6 +310,20 @@ Deno.serve(async req=>{
     p_actor_id:staff.id
    });
    if(error)return out({error:error.message||"No se pudo registrar el pago."},409);
+   return out(data);
+  }
+
+  if(action==="pay_split"){
+   if(!allow(["admin","manager","cashier"]))return out({error:"Solo caja o administración puede registrar pagos."},403);
+   const {split_id,method,amount,tip_amount=0,provider_reference,idempotency_key}=body;
+   const amt=Number(amount),tip=Number(tip_amount);
+   if(!["cash","card","codi","transfer","online"].includes(method)||!Number.isFinite(amt)||amt<=0||!Number.isFinite(tip)||tip<0||tip>amt)return out({error:"Pago o propina inválidos."},400);
+   if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(idempotency_key||"")))return out({error:"Falta una clave válida para proteger el intento de pago."},400);
+   const {data,error}=await admin.rpc("mixe_pay_split_account",{
+    p_split_id:split_id,p_method:method,p_amount:amt,p_tip_amount:tip,
+    p_provider_reference:provider_reference||null,p_idempotency_key:idempotency_key,p_actor_id:staff.id
+   });
+   if(error)return out({error:error.message||"No se pudo registrar el pago de esta persona."},409);
    return out(data);
   }
 
