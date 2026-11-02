@@ -11,6 +11,7 @@ create table if not exists mixe.order_splits (
 );
 alter table mixe.payments add column if not exists split_id uuid references mixe.order_splits(id);
 create index if not exists mixe_order_splits_order_idx on mixe.order_splits(order_id,created_at);
+create index if not exists mixe_order_splits_created_by_idx on mixe.order_splits(created_by);
 create index if not exists mixe_payments_split_status_idx on mixe.payments(split_id,status,created_at);
 alter table mixe.order_splits enable row level security;
 revoke all on mixe.order_splits from public,anon,authenticated;
