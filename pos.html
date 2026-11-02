@@ -8,7 +8,45 @@ function paymentAttemptKey(orderId,method,amount,tip){const storageKey="mixe:pay
 function clearPaymentAttemptKey(storageKey){try{localStorage.removeItem(storageKey)}catch(e){}if(window.__mixePayAttempts)delete window.__mixePayAttempts[storageKey]}
 function reconcilePaymentAttempts(payments=[]){const confirmed=new Set((payments||[]).filter(p=>p.status==="confirmed"&&p.idempotency_key).map(p=>p.idempotency_key));if(!confirmed.size)return;try{for(let i=localStorage.length-1;i>=0;i--){const k=localStorage.key(i);if(k&&k.startsWith("mixe:payment:")&&confirmed.has(localStorage.getItem(k)))localStorage.removeItem(k)}}catch(e){}if(window.__mixePayAttempts)for(const [k,v] of Object.entries(window.__mixePayAttempts))if(confirmed.has(v))delete window.__mixePayAttempts[k]}
 function say(m,bad=false){$("notice").textContent=m;$("notice").style.background=bad?"#f5d9d5":"#e3e9dd"}
-async function refresh(){try{state=await call("bootstrap",{method:"GET"});reconcilePaymentAttempts(state.payments||[]);$("who").textContent=state.staff.display_name+" · "+state.staff.role;$("login").classList.add("hidden");$("app").classList.remove("hidden");$("logout").classList.remove("hidden");render()}catch(e){say(e.message,true);if(/Inicia sesión/.test(e.message)){ $("login").classList.remove("hidden");$("app").classList.add("hidden")}}}
+function captureCashFormState(){
+ const saved={};
+ document.querySelectorAll('[id^="method-"],[id^="amount-"],[id^="tip-rate-"],[id^="tip-custom-"]').forEach(el=>{
+  const match=el.id.match(/^(method|amount|tip-rate|tip-custom)-(.+)$/);
+  if(!match)return;
+  const field=match[1],key=match[2];
+  saved[key]=saved[key]||{};
+  saved[key][field]=el.value;
+ });
+ return saved;
+}
+function restoreCashFormState(saved){
+ for(const [key,values] of Object.entries(saved||{})){
+  for(const field of ["method","amount","tip-rate","tip-custom"]){
+   const el=$(field+"-"+key);
+   if(el&&values[field]!==undefined){
+    if(field==="amount"){
+     const max=Number(el.max),value=Number(values[field]);
+     el.value=Number.isFinite(max)&&max>0&&value>max?max.toFixed(2):values[field];
+    }else el.value=values[field];
+   }
+  }
+  const rate=$("tip-rate-"+key),custom=$("tip-custom-"+key),amount=$("amount-"+key);
+  if(rate)rate.dispatchEvent(new Event("change",{bubbles:true}));
+  if(custom)custom.dispatchEvent(new Event("input",{bubbles:true}));
+  if(amount)amount.dispatchEvent(new Event("input",{bubbles:true}));
+ }
+}
+async function refresh(preserveCashForm=false){
+ try{
+  state=await call("bootstrap",{method:"GET"});
+  reconcilePaymentAttempts(state.payments||[]);
+  $("who").textContent=state.staff.display_name+" · "+state.staff.role;
+  $("login").classList.add("hidden");$("app").classList.remove("hidden");$("logout").classList.remove("hidden");
+  const savedCashForm=preserveCashForm&&tab==="Caja"?captureCashFormState():null;
+  render();
+  if(savedCashForm)restoreCashFormState(savedCashForm);
+ }catch(e){say(e.message,true);if(/Inicia sesión/.test(e.message)){ $("login").classList.remove("hidden");$("app").classList.add("hidden")}}
+}
 async function loadCash(){try{const [summary,history]=await Promise.all([call("cash_summary",{}),call("cash_history",{})]);cashData=summary;cashHistory=history;if(tab==="Corte de caja")render()}catch(e){say(e.message,true)}}
 
 function renderCashHistory(){
@@ -246,5 +284,5 @@ err.textContent="Solicitud enviada a "+email+". Revisa entrada y spam; abre el c
 finally{btn.disabled=false;btn.textContent="Recuperar contraseña";}
 });
 })();
-setInterval(()=>{if(!document.hidden&&!$("app").classList.contains("hidden")&&tab==="Caja"&&!document.querySelector("[data-pay][data-busy=\"1\"]"))refresh().catch(()=>{})},5000);
+setInterval(()=>{if(!document.hidden&&!$("app").classList.contains("hidden")&&tab==="Caja"&&!document.querySelector('[data-pay][data-busy="1"]')&&!document.querySelector('[data-pay-split][data-busy="1"]'))refresh(true).catch(()=>{})},5000);
 </script></body></html>
