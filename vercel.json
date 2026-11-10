@@ -1,9 +1,12 @@
 {
-  "redirects": [
+  "rewrites": [
     {
       "source": "/oauth/consent",
-      "destination": "https://coalva-n8n-mcp-coalvas-projects.vercel.app/oauth/consent",
-      "permanent": false
+      "destination": "https://coalva-n8n-mcp-coalvas-projects.vercel.app/oauth/consent"
+    },
+    {
+      "source": "/api/oauth-config",
+      "destination": "https://coalva-n8n-mcp-coalvas-projects.vercel.app/api/oauth-config"
     }
   ]
 }
