@@ -1,0 +1,9 @@
+{
+  "redirects": [
+    {
+      "source": "/oauth/consent",
+      "destination": "https://coalva-n8n-mcp-coalvas-projects.vercel.app/oauth/consent",
+      "permanent": false
+    }
+  ]
+}
